@@ -4,7 +4,9 @@ import datetime
 import timestring
 import neo4j
 from neo4j.manager import ConnectionManager
-from dateutil.parser import parse as parsedate
+
+import timestring
+import dateutil.parser
 
 from uuid import uuid4
 uuid = lambda : str(uuid4())
@@ -45,7 +47,7 @@ def agents(agent_handle=None):
                 MERGE (a:Agent {handle: {H}})
                 SET a.default_rate = {RATE}
                 RETURN a
-                ''',
+            ''',
                 H=request.form['handle'],
                 RATE=int(request.form.get('default_rate') or 0)
             )
@@ -79,6 +81,16 @@ def ious(owes=None, to=None, iou_id=None):
             iou = r.rows[0].iou
             iou['issuer'] = r.rows[0].i['handle']
             iou['bearer'] = r.rows[0].b['handle']
+
+            # interest calculation
+            issuance = dateparse(iou['issued_at'])
+            today = datetime.date.today()
+            days_passed = (today - issuance).days
+            daily_rate = float(1 + iou['rate']/100)**(1.0/4380)
+            amount = iou['value'] * (daily_rate**days_passed)
+            iou['total_owed_today'] = amount
+            iou['interest'] = amount - iou['value']
+
             return jsonify(iou)
         def put():
             pass
@@ -96,6 +108,7 @@ def ious(owes=None, to=None, iou_id=None):
                 ious.append(iou)
             return jsonify({'ious': ious})
         def post():
+            print (dateparse(request.form.get('issued_at')) or datetime.date.today()).isoformat()
             r = graph.request('''
                 MATCH (i:Agent {handle:{ISSUER_HANDLE}})
                 MATCH (b:Agent {handle:{BEARER_HANDLE}})
@@ -122,15 +135,15 @@ def ious(owes=None, to=None, iou_id=None):
                     })
                 CREATE (i)-[:ISSUED]->(iou)-[:HELDBY]->(b)
                 RETURN iou
-                ''',
+            ''',
                 ISSUER_HANDLE=request.form['issuer'],
                 BEARER_HANDLE=request.form['bearer'],
                 ID=uuid(),
-                DATE=request.form.get('issued_at') or datetime.datetime.now().isoformat(),
+                DATE=(dateparse(request.form.get('issued_at')) or datetime.date.today()).isoformat(),
                 VAL=int(request.form['value']),
                 RATE=float(request.form['rate']) if request.form.get('rate') else None
             )
-            return redirecdt('/ious/' + r.rows[0].iou['id'])
+            return redirect('/ious/' + r.rows[0].iou['id'])
 
     return locals()[request.method.lower()]()
 
@@ -138,6 +151,16 @@ def ious(owes=None, to=None, iou_id=None):
 def make_session_permanent():
     session.permanent = True
     app.permanent_session_lifetime = datetime.timedelta(days=1000)
+
+## utils
+def dateparse(string):
+    try:
+        return timestring.Date(string).date.date()
+    except timestring.TimestringInvalid:
+        try:
+            return dateutil.parser.parse(string).date()
+        except ValueError:
+            return None
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0')
