@@ -2,6 +2,7 @@
 
 <form method=post action=/agents/>
 <legend>agents</legend>
+  <a href="/agents/">show all</a><br>
   <input name=handle placeholder=handle>
   <input name=default_rate placeholder='default interest rate'>
   <button type=submit>create agent</button>
@@ -9,8 +10,9 @@
 
 <form method=post action=/ious/>
 <legend>iou</legend>
+  <a href="/ious/">show all</a><br>
   <input name=issuer placeholder=issuer>
-  <input name=recipient placeholder=recipient>
+  <input name=bearer placeholder=bearer>
   <input name=value placeholder=value>
   <input name=rate placeholder=rate>
   <button type=submit>create iou</button>

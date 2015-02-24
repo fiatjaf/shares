@@ -9,7 +9,7 @@ from dateutil.parser import parse as parsedate
 from uuid import uuid4
 uuid = lambda : str(uuid4())
 
-from flask import Flask, request, render_template, redirect, session, url_for, jsonify
+from flask import Flask, request, render_template, redirect, session, jsonify
 
 app = Flask(__name__)
 app.debug = settings.DEBUG
@@ -18,8 +18,8 @@ app.config.from_object(settings)
 graph = ConnectionManager(settings.GRAPHENEDB_URL)
 
 ### ASSUMPTIONS
-# 'rate' is the DAILY interest rate for each IOU.
-#
+# 'rate' is the YEARLY interest rate for each IOU.
+# all values are given in cents -- so $1 is written as the integer 100
 #
 ###
 
@@ -32,14 +32,14 @@ def index():
 def agents(agent_handle=None):
     if agent_handle:
         def get():
-            r = graph.request('MATCH (a:Agent {handle: {0}}) RETURN a', agent_handle)
-            return jsonify({'res': r})
+            r = graph.request('MATCH (a:Agent {handle: {H}}) RETURN a', H=agent_handle)
+            return jsonify(r.rows[0].a)
         def put():
             pass
     else:
         def get():
             r = graph.request('MATCH (a:Agent) RETURN a')
-            return jsonify({'res': r})
+            return jsonify({'agents': [row.a for row in r.rows]})
         def post():
             r = graph.request('''
                 MERGE (a:Agent {handle: {H}})
@@ -47,8 +47,9 @@ def agents(agent_handle=None):
                 RETURN a
                 ''',
                 H=request.form['handle'],
-                RATE=int(request.form.get('default_rate')) or None)[0]
-            return redirect(url_for('agents', agent_handle=r[0]['handle']))
+                RATE=int(request.form.get('default_rate') or 0)
+            )
+            return redirect('/agents/' + r.rows[0].a['handle'])
 
     return locals()[request.method.lower()]()
 
@@ -71,42 +72,65 @@ def ious(owes=None, to=None, iou_id=None):
             pass
     elif iou_id:
         def get():
-            r = graph.request('MATCH (a:IOU, {id: {0}}) RETURN a', iou_id)
-            return jsonify({'res': r})
+            r = graph.request('''
+                MATCH (i)-[:ISSUED]->(iou:IOU {id: {ID}})-[:HELDBY]->(b)
+                RETURN i, iou, b
+            ''', ID=iou_id)
+            iou = r.rows[0].iou
+            iou['issuer'] = r.rows[0].i['handle']
+            iou['bearer'] = r.rows[0].b['handle']
+            return jsonify(iou)
         def put():
             pass
     else:
         def get():
-            r = graph.request('MATCH (a:IOU) RETURN a')
-            return jsonify({'res': r})
+            r = graph.request('''
+                MATCH (i)-[:ISSUED]->(iou:IOU)-[:HELDBY]->(b)
+                RETURN i, iou, b
+            ''')
+            ious = []
+            for row in r.rows:
+                iou = row.iou
+                iou['issuer'] = row.i['handle']
+                iou['bearer'] = row.b['handle']
+                ious.append(iou)
+            return jsonify({'ious': ious})
         def post():
             r = graph.request('''
                 MATCH (i:Agent {handle:{ISSUER_HANDLE}})
-                MATCH (r:Agent {handle:{RECIPIENT_HANDLE}})
-                OPTIONAL MATCH (r)-[line:Line]->(i)
+                MATCH (b:Agent {handle:{BEARER_HANDLE}})
+                OPTIONAL MATCH (b)-[line:Line]->(i)
                 CREATE (iou:IOU {
                     id: {ID},
                     issued_at: {DATE},
                     value: {VAL},
                     rate: 
                       CASE
-                        WHEN {RATE} IS NULL THEN CASE
-                          WHEN line IS NOT NULL THEN CASE WHEN line.rate IS NULL THEN 0 ELSE line.rate END
-                          ELSE CASE WHEN r.default_rate IS NULL THEN 0 ELSE r.default_rate END
-                        END ELSE {RATE}
+                        WHEN {RATE} IS NULL THEN
+                          CASE
+                            WHEN line IS NOT NULL THEN CASE
+                              WHEN line.rate IS NULL THEN 0
+                              ELSE line.rate
+                            END
+                            ELSE
+                              CASE WHEN b.default_rate IS NULL THEN 0
+                              ELSE b.default_rate
+                            END
+                          END
+                        ELSE {RATE}
                       END
                     })
-                CREATE (i)-[:ISSUED]->(iou)-[:HELDBY]->(r)
+                CREATE (i)-[:ISSUED]->(iou)-[:HELDBY]->(b)
                 RETURN iou
                 ''',
                 ISSUER_HANDLE=request.form['issuer'],
-                RECIPIENT_HANDLE=request.form['recipient'],
+                BEARER_HANDLE=request.form['bearer'],
                 ID=uuid(),
                 DATE=request.form.get('issued_at') or datetime.datetime.now().isoformat(),
                 VAL=int(request.form['value']),
-                RATE=request.form.get('rate')
-            )[0]
-            return redirect(url_for('ious', iou_id=r[0]['id']))
+                RATE=float(request.form['rate']) if request.form.get('rate') else None
+            )
+            return redirecdt('/ious/' + r.rows[0].iou['id'])
 
     return locals()[request.method.lower()]()
 
