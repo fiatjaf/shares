@@ -63,7 +63,66 @@ def agents_that_owe(agent_handle):
 def agents_owed_by(agent_handle):
     pass
 
-@app.route('/ious/<owes>/=>/<to>/', methods=['POST', 'GET'])
+@app.route('/lines/<granter>/->/<receiver>/', methods=['GET', 'PUT'])
+@app.route('/lines/', methods=['GET', 'POST'])
+def lines(granter=None, receiver=None):
+    if granter and receiver:
+        def get():
+            r = graph.request('''
+                MATCH (g:Agent {handle:{GRANTER_HANDLE}})
+                MATCH (r:Agent {handle:{RECEIVER_HANDLE}})
+                MATCH (g)-[l:GRANTS]->(r)
+                RETURN g, l, r
+            ''',
+                GRANTER_HANDLE=granter,
+                RECEIVER_HANDLE=receiver
+            )
+
+            line = r.rows[0].l
+            line['granter'] = granter
+            line['receiver'] = receiver
+
+            return jsonify(line)
+        def put():
+            pass
+    else:
+        def get():
+            r = graph.request('''
+                MATCH (g)-[l:GRANTS]->(r)
+                RETURN g, l, r
+            ''')
+
+            lines = []
+            for row in r.rows:
+                line = row.l
+                line['granter'] = row.g['handle']
+                line['receiver'] = row.r['handle']
+                lines.append(line)
+
+            return jsonify({'lines': lines})
+        def post():
+            granter = request.form['granter']
+            receiver = request.form['receiver']
+            r = graph.request('''
+                MATCH (g:Agent {handle:{GRANTER_HANDLE}})
+                MATCH (r:Agent {handle:{RECEIVER_HANDLE}})
+                MERGE (g)-[line:GRANTS]->(r)
+                ON CREATE SET line.value = {VAL}
+                            , line.rate = {RATE}
+                ON MATCH SET  line.value = {VAL}
+                            , line.rate = {RATE}
+                RETURN line
+            ''',
+                GRANTER_HANDLE=granter,
+                RECEIVER_HANDLE=receiver,
+                VAL=int(request.form.get('value') or 0),
+                RATE=float(request.form.get('rate') or 0)
+            )
+            return redirect('/lines/' + granter + '/->/' + receiver)
+
+    return locals()[request.method.lower()]()
+
+@app.route('/ious/<owes>/->/<to>/', methods=['POST', 'GET'])
 @app.route('/ious/<iou_id>/', methods=['PUT', 'GET'])
 @app.route('/ious/', methods=['POST', 'GET'])
 def ious(owes=None, to=None, iou_id=None):
@@ -108,11 +167,10 @@ def ious(owes=None, to=None, iou_id=None):
                 ious.append(iou)
             return jsonify({'ious': ious})
         def post():
-            print (dateparse(request.form.get('issued_at')) or datetime.date.today()).isoformat()
             r = graph.request('''
                 MATCH (i:Agent {handle:{ISSUER_HANDLE}})
                 MATCH (b:Agent {handle:{BEARER_HANDLE}})
-                OPTIONAL MATCH (b)-[line:Line]->(i)
+                OPTIONAL MATCH (b)-[line:GRANTS]->(i)
                 CREATE (iou:IOU {
                     id: {ID},
                     issued_at: {DATE},
