@@ -122,6 +122,32 @@ def lines(granter=None, receiver=None):
 
     return locals()[request.method.lower()]()
 
+@app.route('/paths/<granter>/->/<receiver>/', methods=['GET'])
+def paths(granter, receiver):
+    r = graph.request('''
+        MATCH (g:Agent {handle:{GRANTER_HANDLE}})
+        MATCH (r:Agent {handle:{RECEIVER_HANDLE}})
+        MATCH fullpath = (g)-[:GRANTS*..10]->(r)
+        WITH fullpath, relationships(fullpath) as path, nodes(fullpath) as agents
+        WITH agents, path, extract(a in tail(agents) | a.handle) as names
+        WITH names, path, reduce(r = 0, line in path | r + line.rate) as rate
+        RETURN path, names, rate ORDER BY rate
+    ''',
+        GRANTER_HANDLE=granter,
+        RECEIVER_HANDLE=receiver
+    )
+
+    paths = []
+    for row in r.rows:
+        path = {
+            'length': len(row.names),
+            'rate': row.rate,
+            'through': row.names
+        }
+        paths.append(path)
+
+    return jsonify({'paths': paths})
+
 @app.route('/ious/<owes>/->/<to>/', methods=['POST', 'GET'])
 @app.route('/ious/<iou_id>/', methods=['PUT', 'GET'])
 @app.route('/ious/', methods=['POST', 'GET'])
